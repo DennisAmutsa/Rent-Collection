@@ -45,8 +45,11 @@ function requireLogin() {
 }
 
 function hasRole($role) {
+    // Handle array of roles
+    $roles = is_array($role) ? $role : [$role];
+    
     // First check session
-    if (isset($_SESSION['user_role']) && $_SESSION['user_role'] === $role) {
+    if (isset($_SESSION['user_role']) && in_array($_SESSION['user_role'], $roles)) {
         return true;
     }
     
@@ -58,7 +61,7 @@ function hasRole($role) {
             [$_SESSION['user_id']]
         );
         
-        if ($user && $user['role'] === $role) {
+        if ($user && in_array($user['role'], $roles)) {
             // Update session with correct role
             $_SESSION['user_role'] = $user['role'];
             return true;

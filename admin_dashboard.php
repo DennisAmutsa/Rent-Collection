@@ -689,6 +689,7 @@ $pendingMessages = $db->fetchOne("SELECT COUNT(*) as count FROM tenant_messages 
                 <li><a href="manage_users.php">Manage Users</a></li>
                 <li><a href="manage_properties.php">Manage Properties</a></li>
                 <li><a href="manage_payments.php">Manage Payments</a></li>
+                <li><a href="admin_payment_receipts.php">Payment Receipts</a></li>
                 <li><a href="tenant_messages.php">Tenant Messages</a></li>
                 <li><a href="send_notifications.php">Send Notifications</a></li>
                 <li><a href="system_reports.php">Reports</a></li>

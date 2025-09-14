@@ -647,6 +647,8 @@ if (!$can_view) {
                             <a href="tenant_receipts.php" class="btn btn-secondary">← Back to Receipts</a>
                         <?php elseif ($user['role'] === 'landlord'): ?>
                             <a href="landlord_receipts.php" class="btn btn-secondary">← Back to Receipts</a>
+                        <?php elseif ($user['role'] === 'admin'): ?>
+                            <a href="admin_payment_receipts.php" class="btn btn-secondary">← Back to Payment Receipts</a>
                         <?php else: ?>
                             <a href="manage_payments.php" class="btn btn-secondary">← Back to Payments</a>
                         <?php endif; ?>
