@@ -17,10 +17,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['record_payment'])) {
     $tenant_id = sanitizeInput($_POST['tenant_id']);
     $amount = floatval($_POST['amount']);
     $payment_date = sanitizeInput($_POST['payment_date']);
+    $due_date = sanitizeInput($_POST['due_date']);
     $payment_method = sanitizeInput($_POST['payment_method']);
+    $status = sanitizeInput($_POST['status']);
     $notes = sanitizeInput($_POST['notes']);
     
-    if ($tenant_id && $amount > 0 && $payment_date) {
+    if ($tenant_id && $amount > 0 && $payment_date && $due_date) {
         try {
             // Get the property_id for this tenant
             if ($user['role'] === 'admin') {
@@ -41,10 +43,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['record_payment'])) {
             }
             
             if ($tenant_property) {
-                // Set due_date same as payment_date for recorded payments
+                // Insert payment with specified due_date and status
                 $db->query(
-                    "INSERT INTO rent_payments (tenant_id, property_id, amount, payment_date, due_date, payment_method, notes, recorded_by, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'paid')",
-                    [$tenant_id, $tenant_property['property_id'], $amount, $payment_date, $payment_date, $payment_method, $notes, $user['id']]
+                    "INSERT INTO rent_payments (tenant_id, property_id, amount, payment_date, due_date, payment_method, notes, recorded_by, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [$tenant_id, $tenant_property['property_id'], $amount, $payment_date, $due_date, $payment_method, $notes, $user['id'], $status]
                 );
                 
                 // Get the payment ID for the receipt
@@ -91,7 +93,7 @@ if ($user['role'] === 'admin') {
     
     // Admin sees all tenants
     $tenants = $db->fetchAll(
-        "SELECT DISTINCT u.id, u.full_name, u.email, p.property_name
+        "SELECT DISTINCT u.id, u.full_name, u.email, p.property_name, p.monthly_rent
          FROM users u
          JOIN tenant_properties tp ON u.id = tp.tenant_id AND tp.is_active = 1
          JOIN properties p ON tp.property_id = p.id
@@ -112,7 +114,7 @@ if ($user['role'] === 'admin') {
     
     // Landlord sees only their tenants
     $tenants = $db->fetchAll(
-        "SELECT DISTINCT u.id, u.full_name, u.email, p.property_name
+        "SELECT DISTINCT u.id, u.full_name, u.email, p.property_name, p.monthly_rent
          FROM users u
          JOIN tenant_properties tp ON u.id = tp.tenant_id AND tp.is_active = 1
          JOIN properties p ON tp.property_id = p.id
@@ -415,6 +417,29 @@ $totalPayments = count($payments);
             background: #555;
         }
         
+        .status-badge {
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            text-transform: uppercase;
+        }
+        
+        .status-paid {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status-pending {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        .status-overdue {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
         .btn-primary {
             background: linear-gradient(135deg, #27ae60, #2ecc71);
         }
@@ -668,11 +693,11 @@ $totalPayments = count($payments);
                     <div class="form-row">
                         <div class="form-group">
                             <label for="tenant_id">Select Tenant *</label>
-                            <select id="tenant_id" name="tenant_id" required>
+                            <select id="tenant_id" name="tenant_id" required onchange="updateAmount()">
                                 <option value="">Choose a tenant</option>
                                 <?php foreach ($tenants as $tenant): ?>
-                                    <option value="<?php echo $tenant['id']; ?>">
-                                        <?php echo htmlspecialchars($tenant['full_name'] . ' - ' . $tenant['property_name']); ?>
+                                    <option value="<?php echo $tenant['id']; ?>" data-rent="<?php echo $tenant['monthly_rent']; ?>">
+                                        <?php echo htmlspecialchars($tenant['full_name'] . ' - ' . $tenant['property_name'] . ' (KES ' . number_format($tenant['monthly_rent']) . ')'); ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
@@ -680,7 +705,8 @@ $totalPayments = count($payments);
                         <div class="form-group">
                             <label for="amount">Amount *</label>
                             <input type="number" id="amount" name="amount" required
-                                   step="0.01" min="0" placeholder="1200.00">
+                                   step="0.01" min="0" placeholder="0.00" readonly>
+                            <small class="form-text">Amount will auto-populate based on selected tenant's property</small>
                         </div>
                     </div>
                     <div class="form-row">
@@ -688,6 +714,12 @@ $totalPayments = count($payments);
                             <label for="payment_date">Payment Date *</label>
                             <input type="date" id="payment_date" name="payment_date" required>
                         </div>
+                        <div class="form-group">
+                            <label for="due_date">Due Date *</label>
+                            <input type="date" id="due_date" name="due_date" required>
+                        </div>
+                    </div>
+                    <div class="form-row">
                         <div class="form-group">
                             <label for="payment_method">Payment Method *</label>
                             <select id="payment_method" name="payment_method" required>
@@ -697,6 +729,14 @@ $totalPayments = count($payments);
                                 <option value="Check">Check</option>
                                 <option value="Online Payment">Online Payment</option>
                                 <option value="Mobile Money">Mobile Money</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="status">Payment Status *</label>
+                            <select id="status" name="status" required>
+                                <option value="pending">Pending</option>
+                                <option value="paid">Paid</option>
+                                <option value="overdue">Overdue</option>
                             </select>
                         </div>
                     </div>
@@ -721,9 +761,11 @@ $totalPayments = count($payments);
                             <thead>
                                 <tr>
                                     <th>Date</th>
+                                    <th>Due Date</th>
                                     <th>Tenant</th>
                                     <th>Property</th>
                                     <th>Amount</th>
+                                    <th>Status</th>
                                     <th>Method</th>
                                     <th>Notes</th>
                                 </tr>
@@ -732,12 +774,18 @@ $totalPayments = count($payments);
                                 <?php foreach ($payments as $payment): ?>
                                     <tr>
                                         <td><?php echo formatDate($payment['payment_date']); ?></td>
+                                        <td><?php echo formatDate($payment['due_date']); ?></td>
                                         <td>
                                             <strong><?php echo htmlspecialchars($payment['tenant_name']); ?></strong><br>
                                             <small><?php echo htmlspecialchars($payment['tenant_email']); ?></small>
                                         </td>
                                         <td><?php echo htmlspecialchars($payment['property_name']); ?></td>
                                         <td><?php echo formatCurrency($payment['amount']); ?></td>
+                                        <td>
+                                            <span class="status-badge status-<?php echo $payment['status']; ?>">
+                                                <?php echo ucfirst($payment['status']); ?>
+                                            </span>
+                                        </td>
                                         <td><?php echo htmlspecialchars($payment['payment_method']); ?></td>
                                         <td><?php echo htmlspecialchars($payment['notes'] ?: 'N/A'); ?></td>
                                     </tr>
@@ -783,6 +831,20 @@ $totalPayments = count($payments);
                 });
             });
         });
+    </script>
+    <script>
+        function updateAmount() {
+            const tenantSelect = document.getElementById('tenant_id');
+            const amountInput = document.getElementById('amount');
+            
+            if (tenantSelect.value) {
+                const selectedOption = tenantSelect.options[tenantSelect.selectedIndex];
+                const monthlyRent = selectedOption.getAttribute('data-rent');
+                amountInput.value = monthlyRent;
+            } else {
+                amountInput.value = '';
+            }
+        }
     </script>
 </body>
 </html>

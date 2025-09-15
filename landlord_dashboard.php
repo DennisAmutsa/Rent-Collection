@@ -5,6 +5,14 @@ requireRole('landlord');
 $user = getCurrentUser();
 $db = new Database();
 
+// Automatically update overdue payments
+$db->query("
+    UPDATE rent_payments 
+    SET status = 'overdue' 
+    WHERE status = 'pending' 
+    AND due_date < CURDATE()
+");
+
 // Get landlord's properties
 $properties = $db->fetchAll(
     "SELECT p.*, COUNT(tp.tenant_id) as tenant_count 

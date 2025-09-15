@@ -8,6 +8,14 @@ if (!hasRole('admin')) {
 $user = getCurrentUser();
 $db = new Database();
 
+// Automatically update overdue payments
+$db->query("
+    UPDATE rent_payments 
+    SET status = 'overdue' 
+    WHERE status = 'pending' 
+    AND due_date < CURDATE()
+");
+
 // Handle message reply
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reply_message'])) {
     $message_id = $_POST['message_id'];
@@ -689,7 +697,9 @@ $pendingMessages = $db->fetchOne("SELECT COUNT(*) as count FROM tenant_messages 
                 <li><a href="manage_users.php">Manage Users</a></li>
                 <li><a href="manage_properties.php">Manage Properties</a></li>
                 <li><a href="manage_payments.php">Manage Payments</a></li>
+                <li><a href="review_payments.php">Review Payments</a></li>
                 <li><a href="admin_payment_receipts.php">Payment Receipts</a></li>
+                <li><a href="financial_analytics.php">Financial Analytics</a></li>
                 <li><a href="tenant_messages.php">Tenant Messages</a></li>
                 <li><a href="send_notifications.php">Send Notifications</a></li>
                 <li><a href="system_reports.php">Reports</a></li>

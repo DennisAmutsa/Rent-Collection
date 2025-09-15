@@ -5,11 +5,21 @@ requireRole('tenant');
 $user = getCurrentUser();
 $db = new Database();
 
+// Automatically update overdue payments
+$db->query("
+    UPDATE rent_payments 
+    SET status = 'overdue' 
+    WHERE status = 'pending' 
+    AND due_date < CURDATE()
+");
+
 // Handle rent payment
 $message = '';
+$error = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['make_payment'])) {
     $amount = floatval($_POST['amount']);
     $payment_method = sanitizeInput($_POST['payment_method']);
+    $notes = sanitizeInput($_POST['notes'] ?? '');
     
     if ($amount > 0 && $payment_method) {
         // Get tenant's property
@@ -22,21 +32,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['make_payment'])) {
         
         if ($tenantProperty) {
             try {
-                // Create payment record
+                // Create payment record with pending status (admin needs to confirm)
                 $db->query(
-                    "INSERT INTO rent_payments (tenant_id, property_id, amount, payment_date, due_date, status, payment_method) 
-                     VALUES (?, ?, ?, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 1 MONTH), 'paid', ?)",
-                    [$user['id'], $tenantProperty['property_id'], $amount, $payment_method]
+                    "INSERT INTO rent_payments (tenant_id, property_id, amount, payment_date, due_date, status, payment_method, notes, recorded_by) 
+                     VALUES (?, ?, ?, CURDATE(), CURDATE(), 'pending', ?, ?, ?)",
+                    [$user['id'], $tenantProperty['property_id'], $amount, $payment_method, $notes, $user['id']]
                 );
-                $message = "Payment of " . formatCurrency($amount) . " recorded successfully!";
+                
+                $payment_id = $db->lastInsertId();
+                
+                // Create notification for admin about new payment
+                $adminUsers = $db->fetchAll("SELECT id FROM users WHERE role = 'admin'");
+                foreach ($adminUsers as $admin) {
+                    $db->query(
+                        "INSERT INTO notifications (user_id, title, message, type, created_by, created_at) 
+                         VALUES (?, ?, ?, 'payment_submitted', ?, NOW())",
+                        [
+                            $admin['id'],
+                            'New Payment Submitted',
+                            "Tenant " . $user['full_name'] . " has submitted a payment of KES " . number_format($amount) . 
+                            " via " . $payment_method . ". Payment ID: #" . $payment_id . ". Please review and confirm.",
+                            $user['id']
+                        ]
+                    );
+                }
+                
+                $message = "Payment of " . formatCurrency($amount) . " submitted successfully! Admin will review and confirm your payment.";
             } catch (Exception $e) {
-                $message = "Error recording payment: " . $e->getMessage();
+                $error = "Error submitting payment: " . $e->getMessage();
             }
         } else {
-            $message = "No active property found for this tenant";
+            $error = "No active property found for this tenant";
         }
     } else {
-        $message = "Please fill in all fields correctly";
+        $error = "Please fill in all required fields";
     }
 }
 
@@ -75,7 +104,7 @@ $currentMonthPayment = $db->fetchOne(
     "SELECT * FROM rent_payments 
      WHERE tenant_id = ? 
      AND DATE_FORMAT(payment_date, '%Y-%m') = DATE_FORMAT(NOW(), '%Y-%m') 
-     AND status = 'paid'",
+     AND status IN ('paid', 'pending')",
     [$user['id']]
 );
 
@@ -576,6 +605,7 @@ $nextDueDate = $tenantProperty ? date('Y-m-d', strtotime('+1 month')) : null;
             </div>
             <ul class="sidebar-menu">
                 <li><a href="tenant_dashboard.php" class="active">Dashboard</a></li>
+                <li><a href="make_payment.php">Make Payment</a></li>
                 <li><a href="tenant_receipts.php">Receipts</a></li>
                 <li><a href="my_notifications.php">Notifications</a></li>
                 <li><a href="my_profile.php">Profile</a></li>
@@ -626,7 +656,13 @@ $nextDueDate = $tenantProperty ? date('Y-m-d', strtotime('+1 month')) : null;
                     </div>
                     <div class="stat-card">
                         <div class="stat-number">
-                            <?php echo $currentMonthPayment ? 'Paid' : 'Pending'; ?>
+                            <?php 
+                            if ($currentMonthPayment) {
+                                echo ucfirst($currentMonthPayment['status']);
+                            } else {
+                                echo 'Pending';
+                            }
+                            ?>
                         </div>
                         <div class="stat-label">This Month Status</div>
                     </div>
@@ -641,39 +677,66 @@ $nextDueDate = $tenantProperty ? date('Y-m-d', strtotime('+1 month')) : null;
                 </div>
                 
                 <!-- Make Payment -->
-                <?php if (!$currentMonthPayment): ?>
-                    <div class="card">
+                <?php if (!$currentMonthPayment || $currentMonthPayment['status'] === 'rejected'): ?>
+                    <div class="card" id="make-payment">
                         <div class="card-header">
                             <h3>Make Payment</h3>
                         </div>
                         <div class="card-body">
+                            <?php if ($message): ?>
+                                <div class="alert alert-success"><?php echo $message; ?></div>
+                            <?php endif; ?>
+                            
+                            <?php if ($error): ?>
+                                <div class="alert alert-danger"><?php echo $error; ?></div>
+                            <?php endif; ?>
+                            
                             <form method="POST">
                                 <div class="form-row">
                                     <div class="form-group">
-                                        <label for="amount">Amount</label>
+                                        <label for="amount">Amount (KES)</label>
                                         <input type="number" id="amount" name="amount" 
                                                value="<?php echo $tenantProperty['monthly_rent']; ?>" 
-                                               step="0.01" min="0" required>
+                                               step="0.01" min="0" required readonly>
+                                        <small class="form-text">Monthly rent amount</small>
                                     </div>
                                     <div class="form-group">
-                                        <label for="payment_method">Payment Method</label>
+                                        <label for="payment_method">Payment Method *</label>
                                         <select id="payment_method" name="payment_method" required>
                                             <option value="">Select method</option>
-                                            <option value="cash">Cash</option>
-                                            <option value="check">Check</option>
-                                            <option value="bank_transfer">Bank Transfer</option>
-                                            <option value="online">Online Payment</option>
+                                            <option value="Cash">Cash</option>
+                                            <option value="Bank Transfer">Bank Transfer</option>
+                                            <option value="Check">Check</option>
+                                            <option value="Mobile Money">Mobile Money</option>
+                                            <option value="Online Payment">Online Payment</option>
                                         </select>
                                     </div>
                                 </div>
-                                <button type="submit" name="make_payment" class="btn btn-primary">Record Payment</button>
+                                <div class="form-group">
+                                    <label for="notes">Payment Notes (Optional)</label>
+                                    <textarea id="notes" name="notes" rows="2" placeholder="e.g., Reference number, additional details..."></textarea>
+                                </div>
+                                <button type="submit" name="make_payment" class="btn btn-primary">Submit Payment</button>
+                                <p class="form-text mt-2">
+                                    <small>Your payment will be submitted for admin review and confirmation.</small>
+                                </p>
                             </form>
                         </div>
                     </div>
                 <?php else: ?>
-                    <div class="alert alert-success">
-                        <strong>Payment Confirmed!</strong> Your rent payment for this month has been recorded.
-                    </div>
+                    <?php if ($currentMonthPayment['status'] === 'paid'): ?>
+                        <div class="alert alert-success">
+                            <strong>Payment Confirmed!</strong> Your rent payment for this month has been recorded.
+                        </div>
+                    <?php elseif ($currentMonthPayment['status'] === 'pending'): ?>
+                        <div class="alert alert-warning">
+                            <strong>Payment Submitted!</strong> Your payment is pending admin review and confirmation.
+                        </div>
+                    <?php elseif ($currentMonthPayment['status'] === 'rejected'): ?>
+                        <div class="alert alert-danger">
+                            <strong>Payment Rejected!</strong> Your payment was rejected. Please contact admin or submit a new payment.
+                        </div>
+                    <?php endif; ?>
                 <?php endif; ?>
                 
             <?php else: ?>
