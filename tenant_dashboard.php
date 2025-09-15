@@ -99,6 +99,15 @@ $notifications = $db->fetchAll(
     [$user['id']]
 );
 
+// Get tenant's messages
+$tenantMessages = $db->fetchAll(
+    "SELECT * FROM tenant_messages 
+     WHERE tenant_id = ? 
+     ORDER BY created_at DESC 
+     LIMIT 10",
+    [$user['id']]
+);
+
 // Get current month's payment status
 $currentMonthPayment = $db->fetchOne(
     "SELECT * FROM rent_payments 
@@ -607,9 +616,9 @@ $nextDueDate = $tenantProperty ? date('Y-m-d', strtotime('+1 month')) : null;
                 <li><a href="tenant_dashboard.php" class="active">Dashboard</a></li>
                 <li><a href="make_payment.php">Make Payment</a></li>
                 <li><a href="tenant_receipts.php">Receipts</a></li>
+                <li><a href="contact_management.php">Contact Management</a></li>
                 <li><a href="my_notifications.php">Notifications</a></li>
                 <li><a href="my_profile.php">Profile</a></li>
-                <li><a href="contact_management.php">Contact Management</a></li>
                 <li><a href="logout.php">Logout</a></li>
             </ul>
         </div>
@@ -806,6 +815,67 @@ $nextDueDate = $tenantProperty ? date('Y-m-d', strtotime('+1 month')) : null;
                                             From: <?php echo htmlspecialchars($notification['sender_name']); ?> - 
                                             <?php echo formatDate($notification['created_at']); ?>
                                         </div>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                
+                <!-- My Messages -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3>My Messages</h3>
+                    </div>
+                    <div class="card-body">
+                        <?php if (empty($tenantMessages)): ?>
+                            <p>No messages sent yet</p>
+                        <?php else: ?>
+                            <div style="max-height: 400px; overflow-y: auto;">
+                                <?php foreach ($tenantMessages as $msg): ?>
+                                    <div style="border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; margin-bottom: 15px; background: #f8f9fa;">
+                                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                            <div style="font-weight: 600; color: #333;"><?php echo htmlspecialchars($msg['subject']); ?></div>
+                                            <div style="display: flex; gap: 8px;">
+                                                <span style="padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: 500; background: <?php 
+                                                    echo $msg['status'] === 'replied' ? '#d4edda; color: #155724' : 
+                                                         ($msg['status'] === 'resolved' ? '#d1ecf1; color: #0c5460' : '#fff3cd; color: #856404'); 
+                                                ?>">
+                                                    <?php echo ucfirst($msg['status']); ?>
+                                                </span>
+                                                <span style="padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: 500; background: <?php 
+                                                    echo $msg['priority'] === 'high' ? '#f8d7da; color: #721c24' : 
+                                                         ($msg['priority'] === 'medium' ? '#fff3cd; color: #856404' : '#d4edda; color: #155724'); 
+                                                ?>">
+                                                    <?php echo ucfirst($msg['priority']); ?>
+                                                </span>
+                                            </div>
+                                        </div>
+                                        
+                                        <div style="color: #333; margin-bottom: 10px; line-height: 1.5;">
+                                            <?php echo nl2br(htmlspecialchars($msg['message'])); ?>
+                                        </div>
+                                        
+                                        <div style="font-size: 12px; color: #666; margin-bottom: 10px;">
+                                            <strong>Category:</strong> <?php echo ucfirst(str_replace('_', ' ', $msg['category'])); ?> | 
+                                            <strong>Sent:</strong> <?php echo formatDate($msg['created_at']); ?>
+                                        </div>
+                                        
+                                        <?php if ($msg['admin_reply']): ?>
+                                            <div style="background: #d4edda; border: 1px solid #c3e6cb; padding: 12px; border-radius: 6px; margin-top: 10px;">
+                                                <div style="font-weight: 600; color: #155724; margin-bottom: 8px;">📧 Admin Reply:</div>
+                                                <div style="color: #155724; line-height: 1.5;">
+                                                    <?php echo nl2br(htmlspecialchars($msg['admin_reply'])); ?>
+                                                </div>
+                                                <div style="font-size: 11px; color: #0c5460; margin-top: 8px;">
+                                                    Replied on: <?php echo formatDate($msg['replied_at']); ?>
+                                                </div>
+                                            </div>
+                                        <?php else: ?>
+                                            <div style="font-size: 12px; color: #666; font-style: italic;">
+                                                Waiting for admin response...
+                                            </div>
+                                        <?php endif; ?>
                                     </div>
                                 <?php endforeach; ?>
                             </div>

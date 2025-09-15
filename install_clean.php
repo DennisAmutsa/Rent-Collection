@@ -135,7 +135,7 @@ try {
             <?php if ($message): ?>
                 <div class="alert alert-success"><?php echo $message; ?></div>
                 <div style="text-align: center; margin-top: 20px;">
-                    <a href="add_admin.php" class="btn btn-primary">Add Admin User</a>
+                    <a href="register.php" class="btn btn-primary">Register First User</a>
                 </div>
             <?php elseif ($error): ?>
                 <div class="alert alert-error"><?php echo $error; ?></div>
@@ -145,7 +145,7 @@ try {
                     The database tables are already set up. You can start adding your own data.
                 </div>
                 <div style="text-align: center; margin-top: 20px;">
-                    <a href="add_admin.php" class="btn btn-primary">Add Admin User</a>
+                    <a href="register.php" class="btn btn-primary">Register First User</a>
                     <a href="install_clean.php?reinstall=1" class="btn" style="background: #e2e8f0; color: #4a5568; margin-left: 10px;">Reinstall</a>
                 </div>
             <?php else: ?>

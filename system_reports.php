@@ -8,86 +8,238 @@ if (!hasRole('admin') && !hasRole('landlord')) {
 $user = getCurrentUser();
 $db = new Database();
 
-// Get comprehensive system statistics
+// Get filter parameters
+$date_from = $_GET['date_from'] ?? '';
+$date_to = $_GET['date_to'] ?? '';
+$property_filter = $_GET['property'] ?? '';
+$status_filter = $_GET['status'] ?? '';
+
+// Build filter conditions
+$where_conditions = [];
+$params = [];
+
+if ($date_from) {
+    $where_conditions[] = "rp.payment_date >= ?";
+    $params[] = $date_from;
+}
+
+if ($date_to) {
+    $where_conditions[] = "rp.payment_date <= ?";
+    $params[] = $date_to;
+}
+
+if ($property_filter) {
+    $where_conditions[] = "p.id = ?";
+    $params[] = $property_filter;
+}
+
+if ($status_filter) {
+    $where_conditions[] = "rp.status = ?";
+    $params[] = $status_filter;
+}
+
+$filter_clause = $where_conditions ? "WHERE " . implode(" AND ", $where_conditions) : "";
+
+// Get properties for filter dropdown
+if ($user['role'] === 'admin') {
+    $properties = $db->fetchAll("SELECT id, property_name FROM properties ORDER BY property_name");
+} else {
+    $properties = $db->fetchAll("SELECT id, property_name FROM properties WHERE landlord_id = ? ORDER BY property_name", [$user['id']]);
+}
+
+// Get comprehensive system statistics with filters applied
 $stats = [];
 
+// Build base conditions for filtered statistics
+$stats_where_conditions = [];
+$stats_params = [];
+
+if ($property_filter) {
+    $stats_where_conditions[] = "p.id = ?";
+    $stats_params[] = $property_filter;
+}
+
+if ($date_from) {
+    $stats_where_conditions[] = "rp.payment_date >= ?";
+    $stats_params[] = $date_from;
+}
+
+if ($date_to) {
+    $stats_where_conditions[] = "rp.payment_date <= ?";
+    $stats_params[] = $date_to;
+}
+
+if ($status_filter) {
+    $stats_where_conditions[] = "rp.status = ?";
+    $stats_params[] = $status_filter;
+}
+
+$stats_where_clause = $stats_where_conditions ? "WHERE " . implode(" AND ", $stats_where_conditions) : "";
+
 if ($user['role'] === 'admin') {
-    // Admin sees system-wide statistics
-    $stats['total_properties'] = $db->fetchOne("SELECT COUNT(*) as count FROM properties")['count'];
-    $stats['occupied_properties'] = $db->fetchOne(
-        "SELECT COUNT(DISTINCT p.id) as count FROM properties p 
-         JOIN tenant_properties tp ON p.id = tp.property_id AND tp.is_active = 1"
+    // Admin sees system-wide statistics with filters
+    $stats['total_properties'] = $db->fetchOne("SELECT COUNT(DISTINCT p.id) as count FROM properties p")['count'];
+    
+    // Calculate total units across all properties (with property filter if applied)
+    try {
+        $units_where = $property_filter ? "WHERE p.id = ?" : "";
+        $units_params = $property_filter ? [$property_filter] : [];
+        $stats['total_units'] = $db->fetchOne("SELECT COALESCE(SUM(total_units), 0) as count FROM properties p $units_where", $units_params)['count'];
+    } catch (Exception $e) {
+        // Fallback if total_units column doesn't exist yet
+        $stats['total_units'] = $db->fetchOne("SELECT COUNT(*) as count FROM properties p $units_where", $units_params)['count'];
+    }
+    
+    // Calculate occupied units (tenants with active property assignments) with filters
+    $occupied_where = $stats_where_conditions ? "WHERE " . implode(" AND ", $stats_where_conditions) : "";
+    $stats['occupied_units'] = $db->fetchOne(
+        "SELECT COUNT(DISTINCT tp.tenant_id) as count 
+         FROM tenant_properties tp
+         JOIN properties p ON tp.property_id = p.id
+         LEFT JOIN rent_payments rp ON tp.tenant_id = rp.tenant_id
+         $occupied_where
+         AND tp.is_active = 1",
+        $stats_params
     )['count'];
+    
+    // Calculate vacant units
+    $stats['vacant_units'] = $stats['total_units'] - $stats['occupied_units'];
+    
+    // Calculate occupancy rate
+    $stats['occupancy_rate'] = $stats['total_units'] > 0 ? round(($stats['occupied_units'] / $stats['total_units']) * 100, 1) : 0;
     
     $stats['total_tenants'] = $db->fetchOne(
-        "SELECT COUNT(DISTINCT u.id) as count FROM users u
-         JOIN tenant_properties tp ON u.id = tp.tenant_id AND tp.is_active = 1
-         WHERE u.role = 'tenant'"
-    )['count'];
-    
-    $stats['total_payments'] = $db->fetchOne("SELECT COUNT(*) as count FROM rent_payments")['count'];
-    $stats['total_collected'] = $db->fetchOne("SELECT COALESCE(SUM(amount), 0) as total FROM rent_payments")['total'];
-} else {
-    // Landlord sees only their own statistics
-    $stats['total_properties'] = $db->fetchOne("SELECT COUNT(*) as count FROM properties WHERE landlord_id = ?", [$user['id']])['count'];
-    $stats['occupied_properties'] = $db->fetchOne(
-        "SELECT COUNT(DISTINCT p.id) as count FROM properties p 
-         JOIN tenant_properties tp ON p.id = tp.property_id AND tp.is_active = 1 
-         WHERE p.landlord_id = ?", 
-        [$user['id']]
-    )['count'];
-    
-    $stats['total_tenants'] = $db->fetchOne(
-        "SELECT COUNT(DISTINCT u.id) as count FROM users u
+        "SELECT COUNT(DISTINCT u.id) as count 
+         FROM users u
          JOIN tenant_properties tp ON u.id = tp.tenant_id AND tp.is_active = 1
          JOIN properties p ON tp.property_id = p.id
-         WHERE p.landlord_id = ? AND u.role = 'tenant'", 
-        [$user['id']]
+         LEFT JOIN rent_payments rp ON u.id = rp.tenant_id
+         $stats_where_clause
+         AND u.role = 'tenant'",
+        $stats_params
     )['count'];
     
     $stats['total_payments'] = $db->fetchOne(
-        "SELECT COUNT(*) as count FROM rent_payments rp
+        "SELECT COUNT(*) as count 
+         FROM rent_payments rp
          JOIN users u ON rp.tenant_id = u.id
          JOIN tenant_properties tp ON u.id = tp.tenant_id AND tp.is_active = 1
          JOIN properties p ON tp.property_id = p.id
-         WHERE p.landlord_id = ?", 
-        [$user['id']]
+         $stats_where_clause",
+        $stats_params
     )['count'];
     
     $stats['total_collected'] = $db->fetchOne(
-        "SELECT COALESCE(SUM(amount), 0) as total FROM rent_payments rp
+        "SELECT COALESCE(SUM(amount), 0) as total 
+         FROM rent_payments rp
          JOIN users u ON rp.tenant_id = u.id
          JOIN tenant_properties tp ON u.id = tp.tenant_id AND tp.is_active = 1
          JOIN properties p ON tp.property_id = p.id
-         WHERE p.landlord_id = ?", 
-        [$user['id']]
+         $stats_where_clause",
+        $stats_params
+    )['total'];
+} else {
+    // Landlord sees only their own statistics with filters
+    $landlord_conditions = ["p.landlord_id = ?"];
+    $landlord_conditions = array_merge($landlord_conditions, $stats_where_conditions);
+    $landlord_where = "WHERE " . implode(" AND ", $landlord_conditions);
+    $landlord_params = array_merge([$user['id']], $stats_params);
+    
+    $stats['total_properties'] = $db->fetchOne("SELECT COUNT(DISTINCT p.id) as count FROM properties p $landlord_where", $landlord_params)['count'];
+    
+    // Calculate total units for landlord's properties
+    try {
+        $units_where = $property_filter ? "WHERE p.landlord_id = ? AND p.id = ?" : "WHERE p.landlord_id = ?";
+        $units_params = $property_filter ? [$user['id'], $property_filter] : [$user['id']];
+        $stats['total_units'] = $db->fetchOne("SELECT COALESCE(SUM(total_units), 0) as count FROM properties p $units_where", $units_params)['count'];
+    } catch (Exception $e) {
+        // Fallback if total_units column doesn't exist yet
+        $stats['total_units'] = $db->fetchOne("SELECT COUNT(*) as count FROM properties p $units_where", $units_params)['count'];
+    }
+    
+    // Calculate occupied units for landlord's properties with filters
+    $stats['occupied_units'] = $db->fetchOne(
+        "SELECT COUNT(DISTINCT tp.tenant_id) as count 
+         FROM tenant_properties tp
+         JOIN properties p ON tp.property_id = p.id
+         LEFT JOIN rent_payments rp ON tp.tenant_id = rp.tenant_id
+         $landlord_where
+         AND tp.is_active = 1",
+        $landlord_params
+    )['count'];
+    
+    // Calculate vacant units
+    $stats['vacant_units'] = $stats['total_units'] - $stats['occupied_units'];
+    
+    // Calculate occupancy rate
+    $stats['occupancy_rate'] = $stats['total_units'] > 0 ? round(($stats['occupied_units'] / $stats['total_units']) * 100, 1) : 0;
+    
+    $stats['total_tenants'] = $db->fetchOne(
+        "SELECT COUNT(DISTINCT u.id) as count 
+         FROM users u
+         JOIN tenant_properties tp ON u.id = tp.tenant_id AND tp.is_active = 1
+         JOIN properties p ON tp.property_id = p.id
+         LEFT JOIN rent_payments rp ON u.id = rp.tenant_id
+         $landlord_where
+         AND u.role = 'tenant'",
+        $landlord_params
+    )['count'];
+    
+    $stats['total_payments'] = $db->fetchOne(
+        "SELECT COUNT(*) as count 
+         FROM rent_payments rp
+         JOIN users u ON rp.tenant_id = u.id
+         JOIN tenant_properties tp ON u.id = tp.tenant_id AND tp.is_active = 1
+         JOIN properties p ON tp.property_id = p.id
+         $landlord_where",
+        $landlord_params
+    )['count'];
+    
+    $stats['total_collected'] = $db->fetchOne(
+        "SELECT COALESCE(SUM(amount), 0) as total 
+         FROM rent_payments rp
+         JOIN users u ON rp.tenant_id = u.id
+         JOIN tenant_properties tp ON u.id = tp.tenant_id AND tp.is_active = 1
+         JOIN properties p ON tp.property_id = p.id
+         $landlord_where",
+        $landlord_params
     )['total'];
 }
 
-// Recent payments
+// Recent payments with filters
 if ($user['role'] === 'admin') {
     // Admin sees all recent payments
+    $admin_where = $where_conditions ? "WHERE " . implode(" AND ", $where_conditions) : "";
+    $admin_params = $params;
+    
     $recentPayments = $db->fetchAll(
         "SELECT rp.*, u.full_name as tenant_name, p.property_name
          FROM rent_payments rp
          JOIN users u ON rp.tenant_id = u.id
          JOIN tenant_properties tp ON u.id = tp.tenant_id AND tp.is_active = 1
          JOIN properties p ON tp.property_id = p.id
+         $admin_where
          ORDER BY rp.payment_date DESC
-         LIMIT 10"
+         LIMIT 10",
+        $admin_params
     );
 } else {
     // Landlord sees only their payments
+    $landlord_conditions = ["p.landlord_id = ?"];
+    $landlord_conditions = array_merge($landlord_conditions, $where_conditions);
+    $landlord_where = "WHERE " . implode(" AND ", $landlord_conditions);
+    $landlord_params = array_merge([$user['id']], $params);
+    
     $recentPayments = $db->fetchAll(
         "SELECT rp.*, u.full_name as tenant_name, p.property_name
          FROM rent_payments rp
          JOIN users u ON rp.tenant_id = u.id
          JOIN tenant_properties tp ON u.id = tp.tenant_id AND tp.is_active = 1
          JOIN properties p ON tp.property_id = p.id
-         WHERE p.landlord_id = ?
+         $landlord_where
          ORDER BY rp.payment_date DESC
          LIMIT 10",
-        [$user['id']]
+        $landlord_params
     );
 }
 
@@ -104,14 +256,43 @@ if ($user['role'] === 'admin') {
          ORDER BY p.property_name"
     );
     
-    // Monthly income (last 6 months) - all properties
+    // Monthly income (last 6 months) - all properties with filters
+    $monthly_where_conditions = ["rp.payment_date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)"];
+    $monthly_params = [];
+    
+    if ($date_from) {
+        $monthly_where_conditions[] = "rp.payment_date >= ?";
+        $monthly_params[] = $date_from;
+    }
+    
+    if ($date_to) {
+        $monthly_where_conditions[] = "rp.payment_date <= ?";
+        $monthly_params[] = $date_to;
+    }
+    
+    if ($property_filter) {
+        $monthly_where_conditions[] = "p.id = ?";
+        $monthly_params[] = $property_filter;
+    }
+    
+    if ($status_filter) {
+        $monthly_where_conditions[] = "rp.status = ?";
+        $monthly_params[] = $status_filter;
+    }
+    
+    $monthly_where_clause = "WHERE " . implode(" AND ", $monthly_where_conditions);
+    
     $monthlyIncome = $db->fetchAll(
-        "SELECT DATE_FORMAT(payment_date, '%Y-%m') as month,
-                SUM(amount) as total
+        "SELECT DATE_FORMAT(rp.payment_date, '%Y-%m') as month,
+                SUM(rp.amount) as total
          FROM rent_payments rp
-         WHERE payment_date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
-         GROUP BY DATE_FORMAT(payment_date, '%Y-%m')
-         ORDER BY month DESC"
+         JOIN users u ON rp.tenant_id = u.id
+         JOIN tenant_properties tp ON u.id = tp.tenant_id AND tp.is_active = 1
+         JOIN properties p ON tp.property_id = p.id
+         $monthly_where_clause
+         GROUP BY DATE_FORMAT(rp.payment_date, '%Y-%m')
+         ORDER BY month DESC",
+        $monthly_params
     );
 } else {
     // Landlord sees only their properties
@@ -127,19 +308,46 @@ if ($user['role'] === 'admin') {
         [$user['id']]
     );
     
-    // Monthly income (last 6 months) - landlord's properties only
+    // Monthly income (last 6 months) - landlord's properties only with filters
+    $landlord_monthly_conditions = [
+        "p.landlord_id = ?",
+        "rp.payment_date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)"
+    ];
+    $landlord_monthly_params = [$user['id']];
+    
+    if ($date_from) {
+        $landlord_monthly_conditions[] = "rp.payment_date >= ?";
+        $landlord_monthly_params[] = $date_from;
+    }
+    
+    if ($date_to) {
+        $landlord_monthly_conditions[] = "rp.payment_date <= ?";
+        $landlord_monthly_params[] = $date_to;
+    }
+    
+    if ($property_filter) {
+        $landlord_monthly_conditions[] = "p.id = ?";
+        $landlord_monthly_params[] = $property_filter;
+    }
+    
+    if ($status_filter) {
+        $landlord_monthly_conditions[] = "rp.status = ?";
+        $landlord_monthly_params[] = $status_filter;
+    }
+    
+    $landlord_monthly_where_clause = "WHERE " . implode(" AND ", $landlord_monthly_conditions);
+    
     $monthlyIncome = $db->fetchAll(
-        "SELECT DATE_FORMAT(payment_date, '%Y-%m') as month,
-                SUM(amount) as total
+        "SELECT DATE_FORMAT(rp.payment_date, '%Y-%m') as month,
+                SUM(rp.amount) as total
          FROM rent_payments rp
          JOIN users u ON rp.tenant_id = u.id
          JOIN tenant_properties tp ON u.id = tp.tenant_id AND tp.is_active = 1
          JOIN properties p ON tp.property_id = p.id
-         WHERE p.landlord_id = ? 
-         AND payment_date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
-         GROUP BY DATE_FORMAT(payment_date, '%Y-%m')
+         $landlord_monthly_where_clause
+         GROUP BY DATE_FORMAT(rp.payment_date, '%Y-%m')
          ORDER BY month DESC",
-        [$user['id']]
+        $landlord_monthly_params
     );
 }
 ?>
@@ -369,6 +577,76 @@ if ($user['role'] === 'admin') {
             padding: 16px 20px;
         }
         
+        /* Filter Form */
+        .filters {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #333;
+        }
+        
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 8px 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            background: #fafafa;
+        }
+        
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #555;
+            background: white;
+        }
+        
+        .btn {
+            background: #666;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+            margin: 2px;
+        }
+        
+        .btn:hover {
+            background: #555;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #27ae60, #2ecc71);
+        }
+        
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #229954, #27ae60);
+        }
+        
         /* Charts Grid */
         .charts-grid {
             display: grid;
@@ -567,6 +845,55 @@ if ($user['role'] === 'admin') {
                 <p>Visual overview of your rental business performance</p>
             </div>
             
+            <!-- Filters -->
+            <div class="card">
+                <div class="card-header">
+                    <h3>🔍 Filter Reports</h3>
+                </div>
+                <div class="card-body">
+                    <form method="GET" class="filters">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="date_from">From Date</label>
+                                <input type="date" id="date_from" name="date_from" value="<?php echo htmlspecialchars($date_from); ?>">
+                            </div>
+                            <div class="form-group">
+                                <label for="date_to">To Date</label>
+                                <input type="date" id="date_to" name="date_to" value="<?php echo htmlspecialchars($date_to); ?>">
+                            </div>
+                            <div class="form-group">
+                                <label for="property">Property</label>
+                                <select id="property" name="property">
+                                    <option value="">All Properties</option>
+                                    <?php foreach ($properties as $property): ?>
+                                        <option value="<?php echo $property['id']; ?>" <?php echo $property_filter == $property['id'] ? 'selected' : ''; ?>>
+                                            <?php echo htmlspecialchars($property['property_name']); ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="status">Payment Status</label>
+                                <select id="status" name="status">
+                                    <option value="">All Statuses</option>
+                                    <option value="paid" <?php echo $status_filter === 'paid' ? 'selected' : ''; ?>>Paid</option>
+                                    <option value="pending" <?php echo $status_filter === 'pending' ? 'selected' : ''; ?>>Pending</option>
+                                    <option value="overdue" <?php echo $status_filter === 'overdue' ? 'selected' : ''; ?>>Overdue</option>
+                                    <option value="rejected" <?php echo $status_filter === 'rejected' ? 'selected' : ''; ?>>Rejected</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <button type="submit" class="btn btn-primary">Apply Filters</button>
+                                <a href="system_reports.php" class="btn">Clear Filters</a>
+                                <button type="button" onclick="exportToPDF()" class="btn btn-success">📄 Export PDF</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            
             <!-- Key Statistics -->
             <div class="stats-grid">
                 <div class="stat-card">
@@ -574,16 +901,24 @@ if ($user['role'] === 'admin') {
                     <div class="stat-label">Total Properties</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-number"><?php echo $stats['occupied_properties']; ?></div>
-                    <div class="stat-label">Occupied</div>
+                    <div class="stat-number"><?php echo $stats['total_units']; ?></div>
+                    <div class="stat-label">Total Units</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" style="color: #27ae60;"><?php echo $stats['occupied_units']; ?></div>
+                    <div class="stat-label">Occupied Units</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" style="color: #e74c3c;"><?php echo $stats['vacant_units']; ?></div>
+                    <div class="stat-label">Vacant Units</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number"><?php echo $stats['occupancy_rate']; ?>%</div>
+                    <div class="stat-label">Occupancy Rate</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-number"><?php echo formatCurrency($stats['total_collected']); ?></div>
                     <div class="stat-label">Total Collected</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-number"><?php echo $stats['total_properties'] > 0 ? round(($stats['occupied_properties'] / $stats['total_properties']) * 100, 1) : 0; ?>%</div>
-                    <div class="stat-label">Occupancy Rate</div>
                 </div>
             </div>
             
@@ -614,14 +949,42 @@ if ($user['role'] === 'admin') {
                 </div>
             </div>
             
+            <!-- Filtered Results Summary -->
+            <?php if ($date_from || $date_to || $property_filter || $status_filter): ?>
+            <div class="card">
+                <div class="card-header">
+                    <h3>📊 Filtered Results Summary</h3>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info">
+                        <strong>Applied Filters:</strong>
+                        <?php if ($date_from): ?>From: <?php echo formatDate($date_from); ?><?php endif; ?>
+                        <?php if ($date_to): ?> | To: <?php echo formatDate($date_to); ?><?php endif; ?>
+                        <?php if ($property_filter): ?>
+                            <?php 
+                            $selected_property = array_filter($properties, function($p) use ($property_filter) { 
+                                return $p['id'] == $property_filter; 
+                            });
+                            $selected_property = reset($selected_property);
+                            ?>
+                            | Property: <?php echo htmlspecialchars($selected_property['property_name']); ?>
+                        <?php endif; ?>
+                        <?php if ($status_filter): ?> | Status: <?php echo ucfirst($status_filter); ?><?php endif; ?>
+                    </div>
+                </div>
+            </div>
+            <?php endif; ?>
+
             <!-- Recent Payments (Simplified) -->
             <div class="card">
                 <div class="card-header">
-                    <h3>💰 Recent Payments (Last 5)</h3>
+                    <h3>💰 Recent Payments <?php echo ($date_from || $date_to || $property_filter || $status_filter) ? '(Filtered)' : '(Last 5)'; ?></h3>
                 </div>
                 <div class="card-body">
                     <?php if (empty($recentPayments)): ?>
-                        <p style="text-align: center; color: #7f8c8d;">No payments recorded yet.</p>
+                        <p style="text-align: center; color: #7f8c8d;">
+                            No payments found<?php echo ($date_from || $date_to || $property_filter || $status_filter) ? ' matching the applied filters' : ' recorded yet'; ?>.
+                        </p>
                     <?php else: ?>
                         <?php foreach (array_slice($recentPayments, 0, 5) as $payment): ?>
                             <div class="payment-item">
@@ -635,6 +998,12 @@ if ($user['role'] === 'admin') {
                                 </div>
                             </div>
                         <?php endforeach; ?>
+                        <div style="margin-top: 15px; text-align: center;">
+                            <small style="color: #666;">
+                                Showing <?php echo count($recentPayments); ?> payment(s)
+                                <?php echo ($date_from || $date_to || $property_filter || $status_filter) ? 'matching your filters' : 'from recent activity'; ?>
+                            </small>
+                        </div>
                     <?php endif; ?>
                 </div>
             </div>
@@ -675,14 +1044,37 @@ if ($user['role'] === 'admin') {
             });
         });
         
+        // PDF Export function
+        function exportToPDF() {
+            // Get current filter parameters
+            const urlParams = new URLSearchParams(window.location.search);
+            const dateFrom = urlParams.get('date_from') || '';
+            const dateTo = urlParams.get('date_to') || '';
+            const property = urlParams.get('property') || '';
+            const status = urlParams.get('status') || '';
+            
+            // Build export URL with current filters
+            let exportUrl = 'export_reports_pdf.php?';
+            if (dateFrom) exportUrl += 'date_from=' + encodeURIComponent(dateFrom) + '&';
+            if (dateTo) exportUrl += 'date_to=' + encodeURIComponent(dateTo) + '&';
+            if (property) exportUrl += 'property=' + encodeURIComponent(property) + '&';
+            if (status) exportUrl += 'status=' + encodeURIComponent(status) + '&';
+            
+            // Remove trailing &
+            exportUrl = exportUrl.replace(/&$/, '');
+            
+            // Open in new window to trigger download
+            window.open(exportUrl, '_blank');
+        }
+        
         // Occupancy Chart
         const occupancyCtx = document.getElementById('occupancyChart').getContext('2d');
         new Chart(occupancyCtx, {
             type: 'doughnut',
             data: {
-                labels: ['Occupied', 'Vacant'],
+                labels: ['Occupied Units', 'Vacant Units'],
                 datasets: [{
-                    data: [<?php echo $stats['occupied_properties']; ?>, <?php echo $stats['total_properties'] - $stats['occupied_properties']; ?>],
+                    data: [<?php echo $stats['occupied_units']; ?>, <?php echo $stats['vacant_units']; ?>],
                     backgroundColor: ['#27ae60', '#e74c3c'],
                     borderWidth: 0
                 }]

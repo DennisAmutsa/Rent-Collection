@@ -41,6 +41,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register'])) {
         $error = 'Passwords do not match';
     } elseif (strlen($password) < 6) {
         $error = 'Password must be at least 6 characters long';
+    } elseif (!preg_match('/^[a-zA-Z\s\-\'\.]+$/', $full_name)) {
+        $error = 'Full name can only contain letters, spaces, hyphens, apostrophes, and periods';
+    } elseif (!empty($phone) && !preg_match('/^[0-9\s\-\+\(\)]+$/', $phone)) {
+        $error = 'Phone number can only contain numbers, spaces, hyphens, plus signs, and parentheses';
     } else {
         try {
             $db = new Database();
@@ -350,6 +354,83 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register'])) {
                 button.textContent = '👁️';
             }
         }
+
+        // Real-time validation for full name (letters only)
+        document.getElementById('full_name').addEventListener('input', function(e) {
+            const value = e.target.value;
+            const namePattern = /^[a-zA-Z\s\-\'\.]*$/;
+            
+            if (value && !namePattern.test(value)) {
+                e.target.style.borderColor = '#e53e3e';
+                e.target.style.backgroundColor = '#fdf2f2';
+                showFieldError('full_name', 'Full name can only contain letters, spaces, hyphens, apostrophes, and periods');
+            } else {
+                e.target.style.borderColor = '#ecf0f1';
+                e.target.style.backgroundColor = 'white';
+                hideFieldError('full_name');
+            }
+        });
+
+        // Real-time validation for phone number (numbers only)
+        document.getElementById('phone').addEventListener('input', function(e) {
+            const value = e.target.value;
+            const phonePattern = /^[0-9\s\-\+\(\)]*$/;
+            
+            if (value && !phonePattern.test(value)) {
+                e.target.style.borderColor = '#e53e3e';
+                e.target.style.backgroundColor = '#fdf2f2';
+                showFieldError('phone', 'Phone number can only contain numbers, spaces, hyphens, plus signs, and parentheses');
+            } else {
+                e.target.style.borderColor = '#ecf0f1';
+                e.target.style.backgroundColor = 'white';
+                hideFieldError('phone');
+            }
+        });
+
+        function showFieldError(fieldId, message) {
+            let errorDiv = document.getElementById(fieldId + '_error');
+            if (!errorDiv) {
+                errorDiv = document.createElement('div');
+                errorDiv.id = fieldId + '_error';
+                errorDiv.className = 'field-error';
+                errorDiv.style.color = '#e53e3e';
+                errorDiv.style.fontSize = '0.8rem';
+                errorDiv.style.marginTop = '5px';
+                document.getElementById(fieldId).parentNode.appendChild(errorDiv);
+            }
+            errorDiv.textContent = message;
+        }
+
+        function hideFieldError(fieldId) {
+            const errorDiv = document.getElementById(fieldId + '_error');
+            if (errorDiv) {
+                errorDiv.remove();
+            }
+        }
+
+        // Form submission validation
+        document.querySelector('.register-form').addEventListener('submit', function(e) {
+            const fullName = document.getElementById('full_name').value;
+            const phone = document.getElementById('phone').value;
+            const namePattern = /^[a-zA-Z\s\-\'\.]+$/;
+            const phonePattern = /^[0-9\s\-\+\(\)]+$/;
+            
+            let hasError = false;
+            
+            if (fullName && !namePattern.test(fullName)) {
+                showFieldError('full_name', 'Full name can only contain letters, spaces, hyphens, apostrophes, and periods');
+                hasError = true;
+            }
+            
+            if (phone && !phonePattern.test(phone)) {
+                showFieldError('phone', 'Phone number can only contain numbers, spaces, hyphens, plus signs, and parentheses');
+                hasError = true;
+            }
+            
+            if (hasError) {
+                e.preventDefault();
+            }
+        });
     </script>
 </head>
 <body class="register-body">

@@ -12,6 +12,54 @@ $db = new Database();
 $message = '';
 $error = '';
 
+// Create new user
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_user'])) {
+    $username = sanitizeInput($_POST['username']);
+    $email = sanitizeInput($_POST['email']);
+    $password = $_POST['password'];
+    $confirm_password = $_POST['confirm_password'];
+    $full_name = sanitizeInput($_POST['full_name']);
+    $phone = sanitizeInput($_POST['phone']);
+    $role = sanitizeInput($_POST['role']);
+    
+    if (empty($username) || empty($email) || empty($password) || empty($full_name) || empty($role)) {
+        $error = 'Please fill in all required fields';
+    } elseif ($password !== $confirm_password) {
+        $error = 'Passwords do not match';
+    } elseif (strlen($password) < 6) {
+        $error = 'Password must be at least 6 characters long';
+    } elseif (!preg_match('/^[a-zA-Z\s\-\'\.]+$/', $full_name)) {
+        $error = 'Full name can only contain letters, spaces, hyphens, apostrophes, and periods';
+    } elseif (!empty($phone) && !preg_match('/^[0-9\s\-\+\(\)]+$/', $phone)) {
+        $error = 'Phone number can only contain numbers, spaces, hyphens, plus signs, and parentheses';
+    } elseif (!in_array($role, ['admin', 'landlord', 'tenant'])) {
+        $error = 'Invalid role selected';
+    } else {
+        try {
+            // Check if username or email already exists
+            $existing = $db->fetchOne(
+                "SELECT id FROM users WHERE username = ? OR email = ?",
+                [$username, $email]
+            );
+            
+            if ($existing) {
+                $error = 'Username or email already exists';
+            } else {
+                // Create new user
+                $hashed_password = password_hash($password, PASSWORD_DEFAULT);
+                $db->query(
+                    "INSERT INTO users (username, email, password, full_name, phone, role) VALUES (?, ?, ?, ?, ?, ?)",
+                    [$username, $email, $hashed_password, $full_name, $phone, $role]
+                );
+                
+                $message = "User created successfully!";
+            }
+        } catch (Exception $e) {
+            $error = "Error creating user: " . $e->getMessage();
+        }
+    }
+}
+
 // Update user role
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_role'])) {
     $user_id = sanitizeInput($_POST['user_id']);
@@ -694,6 +742,76 @@ $userStats = $db->fetchAll(
                 </div>
             </div>
             
+            <!-- Create New User -->
+            <div class="card">
+                <div class="card-header">
+                    <h3>➕ Create New User</h3>
+                </div>
+                <form method="POST">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="create_username">Username *</label>
+                            <input type="text" id="create_username" name="username" required
+                                   value="<?php echo isset($_POST['username']) ? htmlspecialchars($_POST['username']) : ''; ?>"
+                                   placeholder="Choose a username">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="create_email">Email *</label>
+                            <input type="email" id="create_email" name="email" required
+                                   value="<?php echo isset($_POST['email']) ? htmlspecialchars($_POST['email']) : ''; ?>"
+                                   placeholder="Enter email address">
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="create_full_name">Full Name *</label>
+                            <input type="text" id="create_full_name" name="full_name" required
+                                   value="<?php echo isset($_POST['full_name']) ? htmlspecialchars($_POST['full_name']) : ''; ?>"
+                                   placeholder="Enter full name">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="create_phone">Phone Number</label>
+                            <input type="tel" id="create_phone" name="phone"
+                                   value="<?php echo isset($_POST['phone']) ? htmlspecialchars($_POST['phone']) : ''; ?>"
+                                   placeholder="Enter phone number (optional)">
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="create_password">Password *</label>
+                            <input type="password" id="create_password" name="password" required
+                                   placeholder="Min 6 characters">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="create_confirm_password">Confirm Password *</label>
+                            <input type="password" id="create_confirm_password" name="confirm_password" required
+                                   placeholder="Confirm password">
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="create_role">Role *</label>
+                            <select id="create_role" name="role" required>
+                                <option value="">Select role</option>
+                                <option value="tenant" <?php echo (isset($_POST['role']) && $_POST['role'] === 'tenant') ? 'selected' : ''; ?>>Tenant</option>
+                                <option value="landlord" <?php echo (isset($_POST['role']) && $_POST['role'] === 'landlord') ? 'selected' : ''; ?>>Landlord</option>
+                                <option value="admin" <?php echo (isset($_POST['role']) && $_POST['role'] === 'admin') ? 'selected' : ''; ?>>Admin</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>&nbsp;</label>
+                            <button type="submit" name="create_user" class="btn btn-primary">Create User</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            
             <!-- Change User Role -->
             <div class="card">
                 <div class="card-header">
@@ -861,7 +979,124 @@ $userStats = $db->fetchAll(
                     }
                 });
             });
+
+            // Real-time validation for user creation form
+            // Full name validation (letters only)
+            const fullNameField = document.getElementById('create_full_name');
+            if (fullNameField) {
+                fullNameField.addEventListener('input', function(e) {
+                    const value = e.target.value;
+                    const namePattern = /^[a-zA-Z\s\-\'\.]*$/;
+                    
+                    if (value && !namePattern.test(value)) {
+                        e.target.style.borderColor = '#e53e3e';
+                        e.target.style.backgroundColor = '#fdf2f2';
+                        showFieldError('create_full_name', 'Full name can only contain letters, spaces, hyphens, apostrophes, and periods');
+                    } else {
+                        e.target.style.borderColor = '#e2e8f0';
+                        e.target.style.backgroundColor = 'white';
+                        hideFieldError('create_full_name');
+                    }
+                });
+            }
+
+            // Phone number validation (numbers only)
+            const phoneField = document.getElementById('create_phone');
+            if (phoneField) {
+                phoneField.addEventListener('input', function(e) {
+                    const value = e.target.value;
+                    const phonePattern = /^[0-9\s\-\+\(\)]*$/;
+                    
+                    if (value && !phonePattern.test(value)) {
+                        e.target.style.borderColor = '#e53e3e';
+                        e.target.style.backgroundColor = '#fdf2f2';
+                        showFieldError('create_phone', 'Phone number can only contain numbers, spaces, hyphens, plus signs, and parentheses');
+                    } else {
+                        e.target.style.borderColor = '#e2e8f0';
+                        e.target.style.backgroundColor = 'white';
+                        hideFieldError('create_phone');
+                    }
+                });
+            }
+
+            // Password confirmation validation
+            const passwordField = document.getElementById('create_password');
+            const confirmPasswordField = document.getElementById('create_confirm_password');
+            
+            function validatePasswordMatch() {
+                if (passwordField.value && confirmPasswordField.value) {
+                    if (passwordField.value !== confirmPasswordField.value) {
+                        confirmPasswordField.style.borderColor = '#e53e3e';
+                        confirmPasswordField.style.backgroundColor = '#fdf2f2';
+                        showFieldError('create_confirm_password', 'Passwords do not match');
+                    } else {
+                        confirmPasswordField.style.borderColor = '#e2e8f0';
+                        confirmPasswordField.style.backgroundColor = 'white';
+                        hideFieldError('create_confirm_password');
+                    }
+                }
+            }
+            
+            if (passwordField && confirmPasswordField) {
+                passwordField.addEventListener('input', validatePasswordMatch);
+                confirmPasswordField.addEventListener('input', validatePasswordMatch);
+            }
+
+            // Form submission validation
+            const createUserForm = document.querySelector('form[method="POST"]');
+            if (createUserForm) {
+                createUserForm.addEventListener('submit', function(e) {
+                    const fullName = document.getElementById('create_full_name').value;
+                    const phone = document.getElementById('create_phone').value;
+                    const password = document.getElementById('create_password').value;
+                    const confirmPassword = document.getElementById('create_confirm_password').value;
+                    const namePattern = /^[a-zA-Z\s\-\'\.]+$/;
+                    const phonePattern = /^[0-9\s\-\+\(\)]+$/;
+                    
+                    let hasError = false;
+                    
+                    if (fullName && !namePattern.test(fullName)) {
+                        showFieldError('create_full_name', 'Full name can only contain letters, spaces, hyphens, apostrophes, and periods');
+                        hasError = true;
+                    }
+                    
+                    if (phone && !phonePattern.test(phone)) {
+                        showFieldError('create_phone', 'Phone number can only contain numbers, spaces, hyphens, plus signs, and parentheses');
+                        hasError = true;
+                    }
+                    
+                    if (password && confirmPassword && password !== confirmPassword) {
+                        showFieldError('create_confirm_password', 'Passwords do not match');
+                        hasError = true;
+                    }
+                    
+                    if (hasError) {
+                        e.preventDefault();
+                    }
+                });
+            }
         });
+
+        function showFieldError(fieldId, message) {
+            let errorDiv = document.getElementById(fieldId + '_error');
+            if (!errorDiv) {
+                errorDiv = document.createElement('div');
+                errorDiv.id = fieldId + '_error';
+                errorDiv.className = 'field-error';
+                errorDiv.style.color = '#e53e3e';
+                errorDiv.style.fontSize = '0.8rem';
+                errorDiv.style.marginTop = '5px';
+                document.getElementById(fieldId).parentNode.appendChild(errorDiv);
+            }
+            errorDiv.textContent = message;
+        }
+
+        function hideFieldError(fieldId) {
+            const errorDiv = document.getElementById(fieldId + '_error');
+            if (errorDiv) {
+                errorDiv.remove();
+            }
+        }
     </script>
 </body>
 </html>

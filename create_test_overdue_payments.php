@@ -69,3 +69,4 @@ echo "</ol>";
 
 echo "<p><strong>Note:</strong> These are test payments. You can delete them later from the database.</p>";
 ?>
+

@@ -31,5 +31,5 @@ echo "<hr>";
 echo "<h3>Quick Links:</h3>";
 echo "<p><a href='index.php'>🏠 Homepage</a></p>";
 echo "<p><a href='login.php'>🔐 Login</a></p>";
-echo "<p><a href='add_admin.php'>👤 Create Admin</a></p>";
+echo "<p><a href='register.php'>👤 Register</a></p>";
 ?>

@@ -139,11 +139,30 @@ rent-collection-system/
 - Real-time updates
 
 ### 🔒 Security Features
-- Password hashing
+- **Password Hashing**: bcrypt algorithm with `PASSWORD_DEFAULT`
 - SQL injection prevention
 - XSS protection
 - Session management
 - Role-based access control
+
+#### Password Security Implementation
+The system uses **bcrypt** hashing algorithm for secure password storage:
+
+- **Algorithm**: `PASSWORD_DEFAULT` (bcrypt/Blowfish-based)
+- **Auto-Salting**: Unique salt generated for each password
+- **Cost Factor**: 10 (2^10 = 1024 iterations)
+- **Hash Format**: `$2y$10$[salt][hash]`
+
+**Implementation Locations:**
+- User registration (`register.php`)
+- Admin user creation (`manage_users.php`)
+- Password updates (`my_profile.php`)
+
+**Security Benefits:**
+- Adaptive hashing (can be made slower as hardware improves)
+- Time-resistant against brute force attacks
+- Industry-standard security practices
+- Future-proof algorithm selection
 
 ## Customization
 
